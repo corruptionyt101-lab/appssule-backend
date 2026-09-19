@@ -13,6 +13,11 @@ const DBConnect = require("./database/db");
 const authRouter = require("./routes/auth");
 const chatRouter = require("./routes/chat.js");
 const adminRouter = require("./routes/admin.js");
+const friendsRouter = require("./routes/friends.js");
+const notificationsRouter = require("./routes/notifications.js");
+const hubsRouter = require("./routes/hubs.js");
+const dmRouter = require("./routes/dm.js");
+const rewardsRouter = require("./routes/rewards.js");
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL.split(","), credentials: true }));
 const limit = rateLimit({
@@ -35,7 +40,7 @@ app.use((req, res, next) => {
 app.options(
   "*",
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin: process.env.FRONTEND_URL.split(","),
     credentials: true,
   })
 );
@@ -59,6 +64,11 @@ app.use("/api", indexRouter);
 app.use("/secret", teapot);
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/friends", friendsRouter);
+app.use("/api/notifications", notificationsRouter);
+app.use("/api/hubs", hubsRouter);
+app.use("/api/dm", dmRouter);
+app.use("/api/rewards", rewardsRouter);
 //</App setup>
 //<error stuff (came with express generator)>
 app.use((req, res, next) => {
