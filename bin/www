@@ -1,1 +1,327 @@
+require("dotenv").config();
+const app = require("../app");
+const debug = require("debug")("server:server");
+const http = require("http");
+const jwt = require("jsonwebtoken");
+const { Server } = require("socket.io");
+const messageModel = require("../database/chatmodel.js");
+const userModel = require("../database/usermodel.js");
 
+const bannedIps = require("../database/bannedips.js");
+const port = normalizePort(process.env.PORT || "8080");
+app.set("port", port);
+//functions
+async function addColors(arr) {
+  return await Promise.all(
+    arr.map(async (item) => {
+      const shavedEmail = item.email.replace(/💻|📱/g, "").trim();
+      const colorInDb = await userModel.findOne({ email: shavedEmail });
+      const user = colorInDb || 0;
+      return { ...item.toObject(), color: user?.color || "lightgray", image: user?.image || "none" };
+    })
+  );
+}
+function escapeHtml(str) {
+  if (typeof str !== "string") return str;
+
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL.split(","),
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+});
+// Lets REST routes (friends.js, etc.) push live events via req.app.get("io")
+app.set("io", io);
+
+function checkIfBanned(email) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const user = await userModel.findOne({
+        email: email.replace(/💻|📱/g, "").trim(),
+      });
+      if (!user) resolve({ error: "No user found" });
+      const isIpBanned = await bannedIps.findOne({ ip: user?.ip });
+      if (user?.banned || isIpBanned?.banned) {
+        resolve({
+          banned: true,
+          reason: user?.bannedReason || isIpBanned?.reason || "No reason given",
+        });
+      } else {
+        resolve(false);
+      }
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+const usersConnected = new Map();
+function sendUsersConnectedToRoom() {
+  const usersOnlineMap = new Map();
+  for (let x of [...usersConnected.keys()]) {
+    const id = [...usersConnected.get(x).roomId];
+    for (let idd of id) {
+      if (!usersOnlineMap.has(idd)) {
+        usersOnlineMap.set(idd, new Set());
+      }
+      usersOnlineMap.get(idd).add(x);
+    }
+  }
+  for (let [rmId, usrs] of usersOnlineMap.entries()) {
+    io.to(rmId).emit("users connected", [...usrs]);
+  }
+}
+
+io.on("connection", async (socket) => {
+  function isBanned(email) {
+    return checkIfBanned(email)
+      .then((banned) => {
+        if (banned?.error) {
+          console.log(banned.error);
+          socket.emit("error", banned);
+          socket.disconnect();
+          return;
+        }
+        if (banned?.banned) {
+          console.log("is banned");
+          socket.emit("is banned", banned);
+          socket.disconnect();
+          return;
+        }
+        console.log("is not banned", socket.data.email);
+      })
+      .catch(console.error);
+  }
+  // <validating user
+  let email;
+  try {
+    const handshake = socket.handshake;
+    console.log(
+      "New connection from: ",
+      handshake.address,
+      "cookies: ",
+      !!handshake.auth
+    );
+    if (!handshake.auth) throw new Error("No authentication given.");
+    console.log(handshake.auth);
+    const token = handshake.auth.auth || "";
+    if (!token) {
+      console.log("Unauthorized connection attempt");
+      socket.disconnect();
+      return;
+    }
+    const decoded = jwt.verify(token, process.env.JWT);
+    const deviceEmoji = handshake.device === "mobile" ? "📱" : "💻";
+    socket.data.email = decoded.email + " " + deviceEmoji + " ";
+    email = socket.data.email;
+    if (!email) {
+      throw new Error("No email detected. Disconnecting");
+    }
+
+    // Personal room, keyed by the raw (un-suffixed) email — lets REST routes
+    // like friends.js push a "notification" event straight to this user,
+    // independent of whatever chat room(s) they've joined.
+    socket.join("user:" + decoded.email);
+
+    isBanned(email);
+
+    console.log("User authenticated: ", email);
+
+    console.log("users connected:", [...usersConnected.entries()]);
+  } catch (err) {
+    console.error("Error occurred. Error: ", err);
+    socket.disconnect();
+    return;
+  }
+  //>
+  async function sendMessagesToRoom(roomId) {
+    if (!roomId) return console.log("No roomId yet.");
+    const message = await messageModel
+      .find({ roomId: roomId })
+      .sort({ createdAt: 1 })
+      .limit(100);
+    const messages = await addColors(message);
+    console.log("messages sent to room:", roomId);
+    io.to(roomId).emit("chat message", messages);
+  }
+  async function joinRoomHandler(roomId) {
+    roomId = String(roomId).toLowerCase();
+    socket.join(roomId);
+    const num = usersConnected.get(email)?.numOfConnected || 0;
+    const set = usersConnected.get(email)?.roomId || new Set();
+    const numAdded = {
+      numOfConnected: num + 1,
+      roomId: new Set([...set, roomId]),
+    };
+    usersConnected.set(email, numAdded);
+    socket.data.roomId = roomId;
+    socket.emit(
+      "chat message",
+      await addColors(
+        await messageModel
+          .find({ roomId: socket.data.roomId })
+          .sort({ createdAt: 1 })
+          .limit(100)
+      )
+    );
+    io.emit("users online", [...usersConnected.keys()].length);
+    sendUsersConnectedToRoom();
+  }
+
+  async function chatMessageHandler(msg) {
+    isBanned(socket.data.email);
+    const roomId = socket.data.roomId;
+    if (!roomId) return console.log("No roomId yet.");
+    if (
+      (!msg || msg.trim() === "" || msg.trim().length > 100) &&
+      !(
+        (/:bypass/i.test(msg) && msg.length < 5000) ||
+        msg.match(/image\((.*?)\)/i)
+      )
+    ) {
+      console.log("Bad message, ignoring.");
+      return;
+    }
+    const newMessage = new messageModel({
+      email: email,
+      text: escapeHtml(msg.trim().replace(/:bypass/gi, "")) || " ",
+      roomId: roomId || "main",
+    });
+
+    await newMessage.save();
+    const amount = await messageModel.countDocuments({ roomId: roomId });
+    if (amount > 70) {
+      const toDelete = await messageModel
+        .find({ roomId: roomId })
+        .sort({ createdAt: 1 })
+        .limit(amount - 70);
+      await messageModel.deleteMany({
+        _id: { $in: toDelete.map((doc) => doc._id) },
+      });
+      console.log("Deleted old messages.");
+    }
+    console.log("Messages sent by", socket.data.email, "message:", msg);
+
+    sendMessagesToRoom(roomId);
+  }
+  function requestUsersOnlineHandler() {
+    const roomId = socket.data.roomId;
+    if (!roomId) return console.log("No room Id yet.");
+    socket.emit(
+      "users connected",
+      [...usersConnected.keys()].filter((item) =>
+        (usersConnected.get(item)?.roomId || new Set(["main"])).has(roomId)
+      )
+    );
+  }
+  async function deleteMessageHandler(id) {
+    const message = await messageModel.findById(id);
+    if (!message) return;
+    const shavedEmail = socket.data.email.replace(/💻|📱/g, "").trim();
+    const shavedUserEmail = message.email.replace(/💻|📱/g, "").trim();
+    if (
+      shavedUserEmail !== shavedEmail &&
+      ![...JSON.parse(process.env.ADMINS)].includes(shavedEmail)
+    ) {
+      return console.log(
+        socket.data.email,
+        "Not allowed to delete this message."
+      );
+    }
+    await message.deleteOne();
+    const roomId = socket.data.roomId;
+    sendMessagesToRoom(roomId);
+    console.log("Message deleted by", socket.data.email, "message user:", shavedUserEmail);
+  }
+  function disconnectHandler() {
+    socketCleanUp(socket);
+    const count = (usersConnected.get(email)?.numOfConnected || 0) - 1;
+    if (count > 0) {
+      usersConnected.set(email, {
+        ...usersConnected.get(email),
+        numOfConnected: count,
+      });
+    } else {
+      usersConnected.delete(email);
+    }
+    console.log("User disconnected: ", socket.id);
+    console.log("users connected:", [...usersConnected.entries()]);
+    sendUsersConnectedToRoom();
+    io.emit("users online", [...usersConnected.keys()].length);
+  }
+
+  function socketCleanUp(socket) {
+    socket.off("join room", joinRoomHandler);
+    socket.off("chat message", chatMessageHandler);
+    socket.off("request users connected", requestUsersOnlineHandler);
+    socket.off("delete message", deleteMessageHandler);
+    socket.off("disconnect", disconnectHandler);
+  }
+
+  socket.on("join room", joinRoomHandler);
+
+  socket.on("delete message", deleteMessageHandler);
+
+  socket.on("chat message", chatMessageHandler);
+  socket.on("request users connected", requestUsersOnlineHandler);
+
+  socket.on("disconnect", disconnectHandler);
+});
+server.listen(port, () => {
+  console.log(
+    "Server listening on " + port,
+    `origin: ${process.env.FRONTEND_URL.split(",")}`
+  );
+});
+server.on("error", onError);
+server.on("listening", onListening);
+
+function normalizePort(val) {
+  const port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    return val;
+  }
+
+  if (port >= 0) {
+    return port;
+  }
+
+  return false;
+}
+
+function onError(error) {
+  if (error.syscall !== "listen") {
+    throw error;
+  }
+
+  const bind = typeof port === "string" ? "Pipe " + port : "Port " + port;
+
+  switch (error.code) {
+    case "EACCES":
+      console.error(bind + " requires elevated privileges");
+      process.exit(1);
+      break;
+    case "EADDRINUSE":
+      console.error(bind + " is already in use");
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+function onListening() {
+  const addr = server.address();
+  const bind = typeof addr === "string" ? "pipe " + addr : "port " + addr.port;
+  debug("Listening on " + bind);
+}
