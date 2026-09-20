@@ -24,6 +24,20 @@ router.get("/", async (req, res) => {
   });
 });
 
+// Search all usernames for the "Find Friends" tab. Excludes yourself, returns
+// only what's safe to show publicly.
+router.get("/search", async (req, res) => {
+  const self = await getSelf(req);
+  const q = (req.query.q || "").trim();
+  const filter = {
+    username: { $exists: true, $ne: null, ...(q ? { $regex: q, $options: "i" } : {}) },
+  };
+  const users = await User.find(filter)
+    .select("username color image")
+    .limit(50);
+  res.json(users.filter((u) => !self || u.username !== self.username));
+});
+
 router.post("/request/:username", async (req, res) => {
   const self = await getSelf(req);
   const target = await User.findOne({ username: req.params.username });
