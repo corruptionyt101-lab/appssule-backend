@@ -228,9 +228,11 @@ io.on("connection", async (socket) => {
     if (!message) return;
     const shavedEmail = socket.data.email.replace(/💻|📱/g, "").trim();
     const shavedUserEmail = message.email.replace(/💻|📱/g, "").trim();
+    let admins = [];
+    try { admins = JSON.parse(process.env.ADMINS || "[]"); } catch (e) { admins = []; }
     if (
       shavedUserEmail !== shavedEmail &&
-      ![...JSON.parse(process.env.ADMINS)].includes(shavedEmail)
+      !admins.includes(shavedEmail)
     ) {
       return console.log(
         socket.data.email,
