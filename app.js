@@ -31,7 +31,7 @@ const limit = rateLimit({
 });
 app.use((req, res, next) => {
   if(process.env.STATUS === "development")return next();
-  if(!(["/admin", "/admin/"].includes(req.originalUrl)) && req.method !== "GET" && req.path !== "/api/auth"){
+  if(!(["/admin", "/admin/"].includes(req.originalUrl)) && req.method !== "GET" && !req.path.startsWith("/api/auth")){
     return limit(req, res, next);
   }
   return next();
