@@ -18,6 +18,7 @@ const notificationsRouter = require("./routes/notifications.js");
 const hubsRouter = require("./routes/hubs.js");
 const dmRouter = require("./routes/dm.js");
 const rewardsRouter = require("./routes/rewards.js");
+const meRouter = require("./routes/me.js");
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL.split(","), credentials: true }));
 const limit = rateLimit({
@@ -31,7 +32,7 @@ const limit = rateLimit({
 });
 app.use((req, res, next) => {
   if(process.env.STATUS === "development")return next();
-  if(!(["/admin", "/admin/"].includes(req.originalUrl)) && req.method !== "GET" && !req.path.startsWith("/api/auth")){
+  if(!(["/admin", "/admin/"].includes(req.originalUrl)) && req.method !== "GET" && req.path !== "/api/auth"){
     return limit(req, res, next);
   }
   return next();
@@ -69,6 +70,7 @@ app.use("/api/notifications", notificationsRouter);
 app.use("/api/hubs", hubsRouter);
 app.use("/api/dm", dmRouter);
 app.use("/api/rewards", rewardsRouter);
+app.use("/api/auth/me", meRouter);
 //</App setup>
 //<error stuff (came with express generator)>
 app.use((req, res, next) => {
