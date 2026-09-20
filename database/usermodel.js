@@ -14,6 +14,7 @@ const schema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
+    unique: true,
   },
   // Display identity used by the frontend (chat, friends, profile). Email stays
   // the login/JWT identity so nothing in auth.js or bin/www has to change.
