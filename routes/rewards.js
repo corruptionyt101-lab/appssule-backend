@@ -28,20 +28,32 @@ router.post("/claim", async (req, res) => {
   const now = Date.now();
   const last = self.lastClaimedAt ? self.lastClaimedAt.getTime() : 0;
   const elapsed = now - last;
+  const cutoff = new Date(now - COOLDOWN_MS);
+  const nextStreak = last && elapsed <= GRACE_MS ? self.streak + 1 : 1;
 
-  if (elapsed < COOLDOWN_MS) {
+  // Atomic: only succeeds if lastClaimedAt is still null/old at the moment of
+  // the write. Two near-simultaneous requests can no longer both pass — the
+  // second one's filter no longer matches once the first has updated.
+  const updated = await User.findOneAndUpdate(
+    {
+      email: req.user,
+      $or: [{ lastClaimedAt: null }, { lastClaimedAt: { $lte: cutoff } }],
+    },
+    {
+      $inc: { coins: 50 },
+      $set: { streak: nextStreak, lastClaimedAt: new Date(now) },
+    },
+    { new: true }
+  );
+
+  if (!updated) {
     return res.status(429).json({
       error: "Reward already claimed today",
-      msRemaining: COOLDOWN_MS - elapsed,
+      msRemaining: Math.max(0, COOLDOWN_MS - elapsed),
     });
   }
 
-  self.streak = last && elapsed <= GRACE_MS ? self.streak + 1 : 1;
-  self.coins += 50;
-  self.lastClaimedAt = new Date(now);
-  await self.save();
-
-  res.json({ coins: self.coins, streak: self.streak, lastClaimedAt: self.lastClaimedAt });
+  res.json({ coins: updated.coins, streak: updated.streak, lastClaimedAt: updated.lastClaimedAt });
 });
 
 module.exports = router;
