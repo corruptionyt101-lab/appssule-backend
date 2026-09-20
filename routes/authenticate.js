@@ -18,7 +18,9 @@ const authenticate = async (req, res, next) => {
             }
             req.user = decoded.email;
             req.token = token;
-            req.isAdmin = [...JSON.parse(process.env.ADMINS)].includes(req.user);
+            let admins = [];
+            try { admins = JSON.parse(process.env.ADMINS || "[]"); } catch (e) { admins = []; }
+            req.isAdmin = admins.includes(req.user);
             const user = await Users.findOne({email:req.user});
             if(user?.banned){
                 console.log("User is banned: ", user.email);
