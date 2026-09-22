@@ -19,6 +19,7 @@ const hubsRouter = require("./routes/hubs.js");
 const dmRouter = require("./routes/dm.js");
 const rewardsRouter = require("./routes/rewards.js");
 const meRouter = require("./routes/me.js");
+const socialRouter = require("./routes/social.js");
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL.split(","), credentials: true }));
 const limit = rateLimit({
@@ -71,6 +72,7 @@ app.use("/api/hubs", hubsRouter);
 app.use("/api/dm", dmRouter);
 app.use("/api/rewards", rewardsRouter);
 app.use("/api/auth/me", meRouter);
+app.use("/api/social", socialRouter);
 //</App setup>
 //<error stuff (came with express generator)>
 app.use((req, res, next) => {
