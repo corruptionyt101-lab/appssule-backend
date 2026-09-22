@@ -7,17 +7,20 @@ router.use(authenticate);
 
 // Search usernames by prefix/substring — powers a real "Find Friends" / DM
 // search instead of guessing exact usernames. Only returns public-safe fields.
+// Empty query returns everyone (capped at 50), so "Find Friends" can browse
+// the full user list, not just search results.
 router.get("/search", async (req, res) => {
   const q = (req.query.q || "").trim();
-  if (!q) return res.json([]);
   const self = await User.findOne({ email: req.user });
 
-  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // escape regex chars
-  const matches = await User.find({
-    username: { $regex: safe, $options: "i" },
-  })
+  const filter = q
+    ? { username: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } }
+    : { username: { $exists: true, $ne: null } };
+
+  const matches = await User.find(filter)
     .select("username image")
-    .limit(15)
+    .sort({ username: 1 })
+    .limit(50)
     .lean();
 
   res.json(
