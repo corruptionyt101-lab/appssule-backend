@@ -66,5 +66,11 @@ const schema = new mongoose.Schema({
   outgoingRequests: { type: [String], default: [] },
 
   notifications: { type: [notificationSchema], default: [] },
+
+  // ---- Admin Console ----
+  // "admin" grants access to the console itself; "rank" is just the label
+  // shown next to their name (purely cosmetic, doesn't affect permissions).
+  admin: { type: Boolean, default: false },
+  rank: { type: String, enum: ["Owner", "Dev", "Mod", "Member"], default: "Member" },
 });
 module.exports = mongoose.model("User", schema);
