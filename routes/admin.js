@@ -5,11 +5,15 @@ const userModel = require("../database/usermodel.js");
 const bannedIps = require("../database/bannedips.js");
 const chatMessages = require("../database/chatmodel.js");
 const authenticate = require("./authenticate.js");
-const adminAuthenticate = (req, res, next) => {
-  if (!req.isAdmin) {
-    return res.status(403).json({ message: "Forbidden: Not an admin" });
+const adminAuthenticate = async (req, res, next) => {
+  if (req.isAdmin) return next(); // env-var ADMINS list — always trusted
+  try {
+    const dbUser = await userModel.findOne({ email: req.user });
+    if (dbUser?.admin) return next(); // granted Admin Console access via the console itself
+  } catch (err) {
+    console.error("Error checking admin flag: ", err);
   }
-  next();
+  return res.status(403).json({ message: "Forbidden: Not an admin" });
 };
 router.use(authenticate);
 router.use(adminAuthenticate);
@@ -112,4 +116,67 @@ router.post("/users/ipban", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+// Set a user's cosmetic rank label (Owner, Dev, Mod, Member)
+router.patch("/users/rank", async (req, res) => {
+  try {
+    const { userId, rank } = req.body;
+    if (!userId || !rank) {
+      return res.status(400).json({ error: "userId and rank are required" });
+    }
+    const allowed = ["Owner", "Dev", "Mod", "Member"];
+    if (!allowed.includes(rank)) {
+      return res.status(400).json({ error: `rank must be one of: ${allowed.join(", ")}` });
+    }
+    const user = await userModel.findOne({ _id: userId });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    user.rank = rank;
+    await user.save();
+    console.log(`Admin ${req.user} set ${user.email}'s rank to ${rank}`);
+    return res.status(200).json({ message: "Rank updated", rank: user.rank });
+  } catch (err) {
+    console.error("Error setting rank: ", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// Give (or take) coins — no upper bound, this is an admin tool
+router.post("/users/gift", async (req, res) => {
+  try {
+    const { userId, amount } = req.body;
+    const parsedAmount = Number(amount);
+    if (!userId || !Number.isFinite(parsedAmount)) {
+      return res.status(400).json({ error: "userId and a numeric amount are required" });
+    }
+    const user = await userModel.findOne({ _id: userId });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    user.coins = (user.coins || 0) + parsedAmount;
+    await user.save();
+    console.log(`Admin ${req.user} gifted ${parsedAmount} coins to ${user.email}`);
+    return res.status(200).json({ message: "Coins updated", coins: user.coins });
+  } catch (err) {
+    console.error("Error gifting coins: ", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// Grant or revoke Admin Console access on another account
+router.patch("/users/grant-admin", async (req, res) => {
+  try {
+    const { userId, admin } = req.body;
+    if (!userId || typeof admin !== "boolean") {
+      return res.status(400).json({ error: "userId and a boolean admin flag are required" });
+    }
+    const user = await userModel.findOne({ _id: userId });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    user.admin = admin;
+    await user.save();
+    console.log(`Admin ${req.user} ${admin ? "granted" : "revoked"} console access for ${user.email}`);
+    return res.status(200).json({ message: "Admin access updated", admin: user.admin });
+  } catch (err) {
+    console.error("Error updating admin access: ", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 module.exports = router;
