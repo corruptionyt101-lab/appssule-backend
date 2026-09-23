@@ -124,7 +124,7 @@ router.patch("/users/rank", async (req, res) => {
     if (!userId || !rank) {
       return res.status(400).json({ error: "userId and rank are required" });
     }
-    const allowed = ["Owner", "Dev", "Mod", "Member"];
+    const allowed = ["Owner", "Founder", "Admin", "Dev", "Mod", "Member"];
     if (!allowed.includes(rank)) {
       return res.status(400).json({ error: `rank must be one of: ${allowed.join(", ")}` });
     }
