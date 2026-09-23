@@ -71,6 +71,6 @@ const schema = new mongoose.Schema({
   // "admin" grants access to the console itself; "rank" is just the label
   // shown next to their name (purely cosmetic, doesn't affect permissions).
   admin: { type: Boolean, default: false },
-  rank: { type: String, enum: ["Owner", "Dev", "Mod", "Member"], default: "Member" },
+  rank: { type: String, enum: ["Owner", "Founder", "Admin", "Dev", "Mod", "Member"], default: "Member" },
 });
 module.exports = mongoose.model("User", schema);
