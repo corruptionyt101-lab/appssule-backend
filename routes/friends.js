@@ -33,7 +33,7 @@ router.get("/search", async (req, res) => {
     username: { $exists: true, $ne: null, ...(q ? { $regex: q, $options: "i" } : {}) },
   };
   const users = await User.find(filter)
-    .select("username color image")
+    .select("username color image rank")
     .limit(50);
   res.json(users.filter((u) => !self || u.username !== self.username));
 });
