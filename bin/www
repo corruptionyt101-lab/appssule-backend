@@ -15,14 +15,15 @@ async function addColors(arr) {
   return await Promise.all(
     arr.map(async (item) => {
       const shavedEmail = item.email.replace(/💻|📱/g, "").trim();
-      const colorInDb = await userModel.findOne({ email: shavedEmail });
-      const user = colorInDb || 0;
+      const userInDb = await userModel.findOne({ email: shavedEmail });
       return {
         ...item.toObject(),
-        color: user?.color || "lightgray",
-        image: user?.image || "none",
-        username: user?.username || shavedEmail,
-        rank: user?.rank || null,
+        color: userInDb?.color || "lightgray",
+        image: userInDb?.image || "none",
+        // Needed so group chat (hubs) can show who actually sent each
+        // message instead of just falling back to a raw email address.
+        username: userInDb?.username || shavedEmail,
+        rank: userInDb?.rank || "Member",
       };
     })
   );
