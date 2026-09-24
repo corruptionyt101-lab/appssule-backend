@@ -2,9 +2,10 @@ const mongoose = require("mongoose");
 
 const notificationSchema = new mongoose.Schema(
   {
-    type: { type: String, required: true }, // "friend_request" | "friend_accept" | "gift"
+    type: { type: String, required: true }, // "friend_request" | "friend_accept" | "gift" | "hub_request" | "hub_accept"
     text: { type: String, required: true },
     from: { type: String, default: null }, // the other user's username
+    hubId: { type: String, default: null }, // set for hub_request/hub_accept so the UI can act on it directly
     read: { type: Boolean, default: false },
   },
   { timestamps: true }
