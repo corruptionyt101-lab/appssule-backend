@@ -84,6 +84,7 @@ router.post("/:id/request", async (req, res) => {
       type: "hub_request",
       text: `${self.username} wants to join your hub "${hub.name}".`,
       from: self.username,
+      hubId: hub._id.toString(),
     });
     await owner.save();
     notifyUser(req, owner.email, owner.notifications[0]);
@@ -112,6 +113,7 @@ router.post("/:id/approve", async (req, res) => {
       type: "hub_accept",
       text: `You were let into "${hub.name}".`,
       from: null,
+      hubId: hub._id.toString(),
     });
     await requester.save();
     notifyUser(req, requester.email, requester.notifications[0]);
