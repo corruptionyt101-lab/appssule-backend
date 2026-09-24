@@ -18,20 +18,8 @@ router.get("/", async (req, res) => {
   res.json(hubs);
 });
 
-// Single hub's details — including which usernames are still waiting on
-// approval, but ONLY if the requester is the hub's owner (everyone else
-// just sees the public member list, not the pending-requests queue).
-router.get("/:id", async (req, res) => {
-  const hub = await Hub.findById(req.params.id);
-  if (!hub) return res.status(404).json({ error: "Hub not found" });
-  const isOwner = hub.creator === req.user;
-  const safeHub = hub.toObject();
-  if (!isOwner) delete safeHub.pendingRequests;
-  res.json({ ...safeHub, isOwner });
-});
-
 router.post("/", async (req, res) => {
-  const { name, icon, color, public: isPublic } = req.body;
+  const { name, icon, color, isPrivate } = req.body;
   if (!name || name.trim().length < 2) {
     return res.status(400).json({ error: "Hub name required" });
   }
@@ -42,67 +30,78 @@ router.post("/", async (req, res) => {
     color: color || "#0088ff",
     creator: req.user,
     members: self?.username ? [self.username] : [],
-    public: isPublic !== false, // default to public unless explicitly false
+    isPrivate: !!isPrivate,
   });
   await hub.save();
   res.status(201).json(hub);
 });
 
-// Owner can flip public/private any time after creation.
-router.patch("/:id/visibility", async (req, res) => {
+// Owner can flip a hub between public/private later
+router.patch("/:id/privacy", async (req, res) => {
   const hub = await Hub.findById(req.params.id);
   if (!hub) return res.status(404).json({ error: "Hub not found" });
-  if (hub.creator !== req.user) return res.status(403).json({ error: "Only the hub owner can do that" });
-  hub.public = !!req.body.public;
+  if (hub.creator !== req.user) return res.status(403).json({ error: "Only the hub owner can change this" });
+  hub.isPrivate = !!req.body.isPrivate;
   await hub.save();
   res.json(hub);
 });
 
-// Public hub -> joins instantly. Private hub -> sends a join request to the
-// owner instead (added to pendingRequests, owner gets a notification).
+// Public hubs: join immediately. Private hubs: this is blocked — use /request instead.
 router.post("/:id/join", async (req, res) => {
   const hub = await Hub.findById(req.params.id);
   if (!hub) return res.status(404).json({ error: "Hub not found" });
   const self = await User.findOne({ email: req.user });
   if (!self?.username) return res.status(400).json({ error: "Set a username first" });
 
-  if (hub.members.includes(self.username)) {
-    return res.json({ status: "already-member", hub });
+  if (hub.isPrivate && !hub.members.includes(self.username)) {
+    return res.status(403).json({ error: "This hub is private — request an invite instead.", isPrivate: true });
   }
 
-  if (hub.public) {
+  if (!hub.members.includes(self.username)) {
     hub.members.push(self.username);
     hub.views += 1;
     await hub.save();
-    return res.json({ status: "joined", hub });
   }
-
-  // Private: request instead of instant join
-  if (!hub.pendingRequests.includes(self.username)) {
-    hub.pendingRequests.push(self.username);
-    await hub.save();
-
-    const owner = await User.findOne({ email: hub.creator });
-    if (owner) {
-      owner.notifications.unshift({
-        type: "hub_request",
-        text: `${self.username} asked to join your hub "${hub.name}".`,
-        from: self.username,
-      });
-      await owner.save();
-      notifyUser(req, owner.email, owner.notifications[0]);
-    }
-  }
-  res.json({ status: "requested", hub });
+  res.json(hub);
 });
 
-// Owner-only: approve or decline someone's pending join request.
-router.post("/:id/requests/:username/approve", async (req, res) => {
+// Request to join a private hub — notifies the owner, who approves/declines.
+router.post("/:id/request", async (req, res) => {
   const hub = await Hub.findById(req.params.id);
   if (!hub) return res.status(404).json({ error: "Hub not found" });
-  if (hub.creator !== req.user) return res.status(403).json({ error: "Only the hub owner can do that" });
+  const self = await User.findOne({ email: req.user });
+  if (!self?.username) return res.status(400).json({ error: "Set a username first" });
 
-  const username = req.params.username;
+  if (hub.members.includes(self.username)) return res.json({ status: "already a member" });
+  if (hub.pendingRequests.includes(self.username)) return res.json({ status: "already requested" });
+
+  hub.pendingRequests.push(self.username);
+  await hub.save();
+
+  const owner = await User.findOne({ email: hub.creator });
+  if (owner) {
+    owner.notifications.unshift({
+      type: "hub_request",
+      text: `${self.username} wants to join your hub "${hub.name}".`,
+      from: self.username,
+    });
+    await owner.save();
+    notifyUser(req, owner.email, owner.notifications[0]);
+  }
+
+  res.json({ status: "requested" });
+});
+
+router.post("/:id/approve", async (req, res) => {
+  const hub = await Hub.findById(req.params.id);
+  if (!hub) return res.status(404).json({ error: "Hub not found" });
+  if (hub.creator !== req.user) return res.status(403).json({ error: "Only the hub owner can approve requests" });
+
+  const { username } = req.body;
+  if (!username || !hub.pendingRequests.includes(username)) {
+    return res.status(400).json({ error: "No pending request from that user" });
+  }
+
   hub.pendingRequests = hub.pendingRequests.filter((u) => u !== username);
   if (!hub.members.includes(username)) hub.members.push(username);
   await hub.save();
@@ -111,23 +110,44 @@ router.post("/:id/requests/:username/approve", async (req, res) => {
   if (requester) {
     requester.notifications.unshift({
       type: "hub_accept",
-      text: `You were let into "${hub.name}"!`,
+      text: `You were let into "${hub.name}".`,
       from: null,
     });
     await requester.save();
     notifyUser(req, requester.email, requester.notifications[0]);
   }
+
   res.json(hub);
 });
 
-router.post("/:id/requests/:username/decline", async (req, res) => {
+router.post("/:id/decline", async (req, res) => {
   const hub = await Hub.findById(req.params.id);
   if (!hub) return res.status(404).json({ error: "Hub not found" });
-  if (hub.creator !== req.user) return res.status(403).json({ error: "Only the hub owner can do that" });
+  if (hub.creator !== req.user) return res.status(403).json({ error: "Only the hub owner can decline requests" });
 
-  hub.pendingRequests = hub.pendingRequests.filter((u) => u !== req.params.username);
+  const { username } = req.body;
+  hub.pendingRequests = hub.pendingRequests.filter((u) => u !== username);
   await hub.save();
   res.json(hub);
+});
+
+// Member list for the "who's in this hub" panel — basic public fields only.
+router.get("/:id/members", async (req, res) => {
+  const hub = await Hub.findById(req.params.id);
+  if (!hub) return res.status(404).json({ error: "Hub not found" });
+  const members = await User.find({ username: { $in: hub.members } }).select("username image rank");
+
+  let pending = [];
+  if (hub.creator === req.user && hub.pendingRequests.length > 0) {
+    pending = await User.find({ username: { $in: hub.pendingRequests } }).select("username image rank");
+  }
+
+  res.json({
+    members,
+    pending,
+    isOwner: hub.creator === req.user,
+    creator: hub.creator,
+  });
 });
 
 module.exports = router;
