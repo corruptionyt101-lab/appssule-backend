@@ -18,7 +18,7 @@ router.get("/search", async (req, res) => {
     : { username: { $exists: true, $ne: null } };
 
   const matches = await User.find(filter)
-    .select("username image")
+    .select("username image rank")
     .sort({ username: 1 })
     .limit(50)
     .lean();
@@ -26,18 +26,19 @@ router.get("/search", async (req, res) => {
   res.json(
     matches
       .filter((u) => u.username && u.username !== self?.username)
-      .map((u) => ({ username: u.username, image: u.image }))
+      .map((u) => ({ username: u.username, image: u.image, rank: u.rank }))
   );
 });
 
 // Public-safe profile lookup for any username — no coins/email/streak exposed,
-// since those are private to the account owner.
+// since those are private to the account owner. rank IS included — it's a
+// cosmetic label, safe to show on anyone's profile.
 router.get("/profile/:username", async (req, res) => {
   const user = await User.findOne({ username: req.params.username }).select(
-    "username bio rep image"
+    "username bio rep image rank"
   );
   if (!user) return res.status(404).json({ error: "User not found" });
-  res.json({ username: user.username, bio: user.bio, rep: user.rep, image: user.image });
+  res.json({ username: user.username, bio: user.bio, rep: user.rep, image: user.image, rank: user.rank });
 });
 
 // Update your own bio (already stored on the schema, just had no save path)
